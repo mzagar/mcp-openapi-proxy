@@ -348,6 +348,10 @@ def call_function(*, function_name: str, parameters: dict = None, env_key: str =
 def run_simple_server():
     """Runs the FastMCP server."""
     logger.debug("Starting run_simple_server")
+
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+    logger.debug(f"Using MCP transport: '{transport}'. Override with MCP_TRANSPORT env var.")
+
     spec_url = os.environ.get("OPENAPI_SPEC_URL")
     if not spec_url:
         logger.error("OPENAPI_SPEC_URL environment variable is required for FastMCP mode.")
@@ -362,8 +366,8 @@ def run_simple_server():
     list_functions()
 
     try:
-        logger.debug("Starting MCP server (FastMCP version)...")
-        mcp.run(transport="stdio")
+        logger.debug(f"Starting MCP server (FastMCP version), MCP transport: '{transport}'...")
+        mcp.run(transport=transport)
     except Exception as e:
         logger.error(f"Unhandled exception in MCP server (FastMCP): {e}", exc_info=True)
         sys.exit(1)
