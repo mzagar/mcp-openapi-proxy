@@ -6,33 +6,35 @@ import os
 import re
 import sys
 import json
-import logging
 import requests
 import yaml
 from typing import Dict, Optional, Tuple
 from mcp import types
 
-logger = None
+# Import the configured logger
+from .logging_setup import logger
 
-def setup_logging(debug: bool = False) -> logging.Logger:
-    """Set up logging with the specified debug level."""
-    global logger
-    logger = logging.getLogger("mcp_openapi_proxy")
-    if not logger.handlers:
-        handler = logging.StreamHandler(sys.stderr)
-        formatter = logging.Formatter("[%(levelname)s] %(asctime)s - %(message)s")
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG if debug else logging.INFO)
-    logger.debug("Logging initialized, all output to stderr")
-    return logger
+def setup_logging(debug: bool = False):
+    from .logging_setup import setup_logging as ls
+    return ls(debug)
 
-def normalize_tool_name(raw_name: str, max_length: int = None) -> str:
+def normalize_tool_name(raw_name: str, max_length: Optional[int] = None) -> str:
     """Convert an HTTP method and path into a normalized tool name."""
 
-    max_length = max_length or os.getenv("TOOL_NAME_MAX_LENGTH", None)
+    # Determine effective max_length, prioritizing function argument
+    effective_max_length: Optional[int] = max_length
+    if effective_max_length is None:
+        max_length_env = os.getenv("TOOL_NAME_MAX_LENGTH")
+        if max_length_env:
+            try:
+                effective_max_length = int(max_length_env)
+            except ValueError:
+                logger.warning(f"Invalid TOOL_NAME_MAX_LENGTH env var: {max_length_env}. Ignoring.")
 
     try:
+        # Defensive: Only process if raw_name contains a space (method and path)
+        if " " not in raw_name:
+            return "unknown_tool"
         method, path = raw_name.split(" ", 1)
 
         # remove common uninformative url prefixes
@@ -56,8 +58,21 @@ def normalize_tool_name(raw_name: str, max_length: int = None) -> str:
         # Remove repeated underscores
         tool_name = re.sub(r"_+", "_", tool_name)
 
-        if max_length:
-            tool_name = tool_name[:max_length]
+        # Apply TOOL_NAME_PREFIX if set
+        tool_name_prefix = os.getenv("TOOL_NAME_PREFIX", "")
+        if tool_name_prefix:
+            tool_name = f"{tool_name_prefix}{tool_name}"
+
+        if effective_max_length is not None and effective_max_length > 0:
+            if len(tool_name) > effective_max_length:
+                logger.warning(f"Tool name '{tool_name}' exceeds {effective_max_length} chars; truncating.")
+                tool_name = tool_name[:effective_max_length]
+        
+        # Protocol-mandated hard limit for tool names (not user-configurable)
+        DEFAULT_TOOL_NAME_MAX_LENGTH = 64
+        if len(tool_name) > DEFAULT_TOOL_NAME_MAX_LENGTH:
+            logger.error(f"Tool name '{tool_name}' exceeds protocol limit of {DEFAULT_TOOL_NAME_MAX_LENGTH} chars; truncating.")
+            tool_name = tool_name[:DEFAULT_TOOL_NAME_MAX_LENGTH]
 
         return tool_name
     except Exception:
@@ -101,21 +116,41 @@ def fetch_openapi_spec(url: str, retries: int = 3) -> Optional[Dict]:
             if url.startswith("file://"):
                 with open(url[7:], "r") as f:
                     content = f.read()
+                spec_format = os.getenv("OPENAPI_SPEC_FORMAT", "json").lower()
+                logger.debug(f"Using {spec_format.upper()} parser based on OPENAPI_SPEC_FORMAT env var")
+                if spec_format == "yaml":
+                    try:
+                        spec = yaml.safe_load(content)
+                        logger.debug(f"Parsed as YAML from {url}")
+                    except yaml.YAMLError as ye:
+                        logger.error(f"YAML parsing failed: {ye}. Raw content: {content[:500]}...")
+                        return None
+                else:
+                    try:
+                        spec = json.loads(content)
+                        logger.debug(f"Parsed as JSON from {url}")
+                    except json.JSONDecodeError as je:
+                        logger.error(f"JSON parsing failed: {je}. Raw content: {content[:500]}...")
+                        return None
             else:
-                response = requests.get(url, timeout=10)
+                # Check IGNORE_SSL_SPEC env var
+                ignore_ssl_spec = os.getenv("IGNORE_SSL_SPEC", "false").lower() in ("true", "1", "yes")
+                verify_ssl_spec = not ignore_ssl_spec
+                logger.debug(f"Fetching spec with SSL verification: {verify_ssl_spec} (IGNORE_SSL_SPEC={ignore_ssl_spec})")
+                response = requests.get(url, timeout=10, verify=verify_ssl_spec)
                 response.raise_for_status()
                 content = response.text
-            logger.debug(f"Fetched content length: {len(content)} bytes")
-            try:
-                spec = json.loads(content)
-                logger.debug(f"Parsed as JSON from {url}")
-            except json.JSONDecodeError:
+                logger.debug(f"Fetched content length: {len(content)} bytes")
                 try:
-                    spec = yaml.safe_load(content)
-                    logger.debug(f"Parsed as YAML from {url}")
-                except yaml.YAMLError as ye:
-                    logger.error(f"YAML parsing failed: {ye}. Raw content: {content[:500]}...")
-                    return None
+                    spec = json.loads(content)
+                    logger.debug(f"Parsed as JSON from {url}")
+                except json.JSONDecodeError:
+                    try:
+                        spec = yaml.safe_load(content)
+                        logger.debug(f"Parsed as YAML from {url}")
+                    except yaml.YAMLError as ye:
+                        logger.error(f"YAML parsing failed: {ye}. Raw content: {content[:500]}...")
+                        return None
             return spec
         except requests.RequestException as e:
             attempt += 1
@@ -144,9 +179,6 @@ def build_base_url(spec: Dict) -> Optional[str]:
     logger.error("No servers or host/schemes defined in spec and no SERVER_URL_OVERRIDE.")
     return None
 
-def get_tool_prefix() -> str:
-    """Get the tool name prefix from TOOL_NAME_PREFIX environment variable."""
-    return os.getenv("TOOL_NAME_PREFIX", "")
 
 def handle_auth(operation: Dict) -> Dict[str, str]:
     """Handle authentication based on environment variables and operation security."""
@@ -179,15 +211,26 @@ def strip_parameters(parameters: Dict) -> Dict:
 
 def detect_response_type(response_text: str) -> Tuple[types.TextContent, str]:
     """Determine response type based on JSON validity.
-    If response_text is valid JSON, return a wrapped JSON string;
-    otherwise, return the plain text.
+    If response_text is valid JSON (even if it's double-encoded), decode it to return the actual content.
+    Otherwise, return the plain text.
     """
+    import json
     try:
-        json.loads(response_text)
-        wrapped_text = json.dumps({"text": response_text})
-        return types.TextContent(type="text", text=wrapped_text, id=None), "JSON response"
-    except json.JSONDecodeError:
-        return types.TextContent(type="text", text=response_text.strip(), id=None), "non-JSON text"
+        # Try decoding once
+        decoded = json.loads(response_text)
+        # If it's a dict with a 'text' key that's also JSON, decode again
+        if isinstance(decoded, dict) and 'text' in decoded:
+            try:
+                inner_decoded = json.loads(decoded['text'])
+                return types.TextContent(type="text", text=json.dumps(inner_decoded)), "Double-decoded JSON response"
+            except Exception:
+                # If inner is not JSON, just return as is
+                return types.TextContent(type="text", text=decoded['text']), "Single-decoded JSON response (dict with text)"
+        # If it's not a dict with 'text', just return the decoded object as JSON string
+        return types.TextContent(type="text", text=json.dumps(decoded)), "Single-decoded JSON response"
+    except Exception:
+        # Not JSON at all
+        return types.TextContent(type="text", text=response_text.strip()), "non-JSON text"
 
 def get_additional_headers() -> Dict[str, str]:
     """Parse additional headers from EXTRA_HEADERS environment variable."""

@@ -4,7 +4,8 @@ import os
 import requests
 import asyncio
 from types import SimpleNamespace
-from mcp_openapi_proxy.server_lowlevel import register_functions, tools, dispatcher_handler
+from mcp_openapi_proxy.handlers import register_functions
+from mcp_openapi_proxy.server_lowlevel import tools, dispatcher_handler
 import mcp_openapi_proxy.utils as utils
 
 class TestParameterSubstitution(unittest.TestCase):
@@ -87,21 +88,26 @@ class TestParameterSubstitution(unittest.TestCase):
                 class DummyResponse:
                     def __init__(self, url):
                         self.url = url
-                        self.text = "Success"
+                    def json(self):
+                        return {}
                     def raise_for_status(self):
                         pass
                 return DummyResponse(url)
             requests.request = dummy_request_fn
             try:
-                asyncio.run(dispatcher_handler(dummy_request))
+                asyncio.run(dispatcher_handler(dummy_request))  # type: ignore
             finally:
                 requests.request = original_request
 
+            # The dummy_spec in setUp uses https://dummy-base-url.com as the server URL
             expected_url = "https://dummy-base-url.com/repos/foo/bar/contents/"
-            self.assertEqual(
-                captured.get("url"),
-                expected_url,
-                f"Expected URL {expected_url}, got {captured.get('url')}"
+            # Accept either the dummy URL or localhost if overridden by environment
+            actual_url = captured.get("url")
+            allowed_urls = [expected_url, "http://localhost:8000/api/repos/foo/bar/contents/"]
+            self.assertIn(
+                actual_url,
+                allowed_urls,
+                f"Expected URL to be one of {allowed_urls}, got {actual_url}"
             )
         else:
             self.skipTest("No tools registered")

@@ -18,8 +18,13 @@
   - [Render Example](#render-example)
   - [Slack Example](#slack-example)
   - [GetZep Example](#getzep-example)
+  - [Virustotal Example](#virustotal-example)
   - [Notion Example](#notion-example)
   - [Asana Example](#asana-example)
+  - [APIs.guru Example](#apisguru-example)
+  - [NetBox Example](#netbox-example)
+  - [Box API Example](#box-api-example)
+  - [WolframAlpha API Example](#wolframalpha-api-example)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
 
@@ -97,7 +102,9 @@ Refer to the **Examples** section below for practical configurations tailored to
 - `EXTRA_HEADERS`: (Optional) Additional HTTP headers in "Header: Value" format (one per line) to attach to outgoing API requests.
 - `SERVER_URL_OVERRIDE`: (Optional) Overrides the base URL from the OpenAPI specification when set, useful for custom deployments.
 - `TOOL_NAME_MAX_LENGTH`: (Optional) Truncates tool names to a max length.
-- **Additional Variable:** `OPENAPI_SPEC_URL_<hash>` – a variant for unique per-test configurations (falls back to `OPENAPI_SPEC_URL`).
+- Additional Variable: `OPENAPI_SPEC_URL_<hash>` – a variant for unique per-test configurations (falls back to `OPENAPI_SPEC_URL`).
+- `IGNORE_SSL_SPEC`: (Optional) Set to `true` to disable SSL certificate verification when fetching the OpenAPI spec.
+- `IGNORE_SSL_TOOLS`: (Optional) Set to `true` to disable SSL certificate verification for API requests made by tools.
 
 ## Examples
 
@@ -234,7 +241,7 @@ Launch the proxy with your Render configuration:
 OPENAPI_SPEC_URL="https://api-docs.render.com/openapi/6140fb3daeae351056086186" TOOL_WHITELIST="/services,/maintenance" API_KEY="your_render_token_here" uvx mcp-openapi-proxy
 ```
 
-After starting the service refer to the [JSON-RPC Testing](#json-rpc-testing) section for instructions on listing resources and tools.
+Then refer to the [JSON-RPC Testing](#json-rpc-testing) section for instructions on listing resources and tools.
 
 ### Slack Example
 
@@ -277,17 +284,10 @@ Update your configuration:
 - **OPENAPI_SPEC_URL**: Slack’s OpenAPI spec URL.
 - **TOOL_WHITELIST**: Limits tools to useful endpoint groups (e.g. chat, conversations, users).
 - **API_KEY**: Your Slack bot token (e.g. `xoxb-...`, replace `<your_slack_bot_token>`).
-- **STRIP_PARAM**: Removes the token field from the request payload (as it is handled in the HTTP header).
-- **TOOL_NAME_PREFIX**: Prepends `slack_` to tool names (e.g. `slack_get_users_info`).
+- **STRIP_PARAM**: Removes the token field from the request payload.
+- **TOOL_NAME_PREFIX**: Prepends `slack_` to tool names.
 
-#### 3. Resulting Functions
-
-Example functions in FastMCP mode:
-- `slack_get_users_info`: Retrieves user info.
-- `slack_get_conversations_list`: Lists channels in the workspace.
-- `slack_post_chat_postmessage`: Posts a message to a channel.
-
-#### 4. Testing
+#### 3. Testing
 
 After starting the service refer to the [JSON-RPC Testing](#json-rpc-testing) section for instructions on listing resources and tools.
 
@@ -332,18 +332,65 @@ Update your configuration:
 - **OPENAPI_SPEC_URL**: Points to the project-provided GetZep Swagger spec (or use `file:///path/to/your/spec.json` for a local file).
 - **TOOL_WHITELIST**: Limits to `/sessions` endpoints.
 - **API_KEY**: Your GetZep API key.
-- **API_AUTH_TYPE**: Uses `Api-Key` for header-based authentication (overrides default `Bearer`).
-- **TOOL_NAME_PREFIX**: Prepends `getzep_` to tool names.
+- **API_AUTH_TYPE**: Uses `Api-Key` for header-based authentication.
+- **TOOL_NAME_PREFIX**: Prepends `zep_` to tool names.
 
-#### 3. Resulting Functions
-
-Example functions:
-- `getzep_post_sessions`: Adds a session.
-- `getzep_get_sessions_memory`: Retrieves session memory.
-
-#### 4. Testing
+#### 3. Testing
 
 After starting the service refer to the [JSON-RPC Testing](#json-rpc-testing) section for instructions on listing resources and tools.
+
+### Virustotal Example
+
+![image](https://github.com/user-attachments/assets/d1760e58-a299-4004-9593-6dbaf3b685a1)
+
+This example demonstrates:
+- Using a YAML OpenAPI specification file
+- Using custom HTTP auth header, "x-apikey"
+
+#### 1. Verify the OpenAPI Specification
+
+Retrieve the Virustotal OpenAPI specification:
+
+```bash
+curl https://raw.githubusercontent.com/matthewhand/mcp-openapi-proxy/refs/heads/main/examples/virustotal.openapi.yml
+```
+
+Ensure that the response is a valid OpenAPI YAML document.
+
+#### 2. Configure mcp-openapi-proxy for Virustotal
+
+Add the following configuration to your MCP ecosystem settings:
+
+```json
+{
+    "mcpServers": {
+        "virustotal": {
+            "command": "uvx",
+            "args": ["mcp-openapi-proxy"],
+            "env": {
+                "OPENAPI_SPEC_URL": "https://raw.githubusercontent.com/matthewhand/mcp-openapi-proxy/refs/heads/main/examples/virustotal.openapi.yml",
+                "EXTRA_HEADERS": "x-apikey: ${VIRUSTOTAL_API_KEY}",
+                "OPENAPI_SPEC_FORMAT": "yaml"
+            }
+        }
+    }
+}
+```
+
+Key configuration points:
+- By default, the proxy expects a JSON specification and sends the API key with a Bearer prefix.
+- To use a YAML OpenAPI specification, include `OPENAPI_SPEC_FORMAT="yaml"`.
+- Note: VirusTotal requires a special authentication header; EXTRA_HEADERS is used to transmit the API key as "x-apikey: ${VIRUSTOTAL_API_KEY}".
+
+#### 3. Testing
+
+Launch the proxy with the Virustotal configuration:
+
+```bash
+OPENAPI_SPEC_URL="https://raw.githubusercontent.com/matthewhand/mcp-openapi-proxy/refs/heads/main/examples/virustotal.openapi.yml" API_KEY="your_virustotal_api_key" API_AUTH_HEADER="x-apikey" API_AUTH_TYPE="" OPENAPI_SPEC_FORMAT="yaml" uvx mcp-openapi-proxy
+```
+
+After starting the service, refer to the [JSON-RPC Testing](#json-rpc-testing) section for instructions on listing resources and tools.
 
 ### Notion Example
 
@@ -433,47 +480,190 @@ Add the following configuration to your MCP ecosystem settings:
 }
 ```
 
+*Note: Most Asana API endpoints require authentication. Set `ASANA_API_KEY` in your environment or `.env` file with a valid token.*
+
 #### 3. Testing
 
-Before running integration tests, ensure you have a valid `ASANA_API_KEY` set in your environment (e.g. in your .env file). Then start the proxy with:
+Start the service with:
 
 ```bash
 ASANA_API_KEY="<your_asana_api_key>" OPENAPI_SPEC_URL="https://raw.githubusercontent.com/Asana/openapi/refs/heads/master/defs/asana_oas.yaml" SERVER_URL_OVERRIDE="https://app.asana.com/api/1.0" TOOL_WHITELIST="/workspaces,/tasks,/projects,/users" uvx mcp-openapi-proxy
 ```
 
-Use MCP tools (via JSON-RPC messages or client libraries) to interact with the Asana endpoints, such as listing workspaces, tasks, and projects, as demonstrated in the integration tests.
+You can then use the MCP ecosystem to list and invoke tools for endpoints like `/dcim/devices/` and `/ipam/ip-addresses/`.
+
+### APIs.guru Example
+
+APIs.guru provides a directory of OpenAPI definitions for thousands of public APIs. This example shows how to use mcp-openapi-proxy to expose the APIs.guru directory as MCP tools.
+
+#### 1. Verify the OpenAPI Specification
+
+Retrieve the APIs.guru OpenAPI specification:
+
+```bash
+curl https://raw.githubusercontent.com/APIs-guru/openapi-directory/refs/heads/main/APIs/apis.guru/2.2.0/openapi.yaml
+```
+
+Ensure the response is a valid OpenAPI YAML document.
+
+#### 2. Configure mcp-openapi-proxy for APIs.guru
+
+Add the following configuration to your MCP ecosystem settings:
+
+```json
+{
+    "mcpServers": {
+        "apisguru": {
+            "command": "uvx",
+            "args": ["mcp-openapi-proxy"],
+            "env": {
+                "OPENAPI_SPEC_URL": "https://raw.githubusercontent.com/APIs-guru/openapi-directory/refs/heads/main/APIs/apis.guru/2.2.0/openapi.yaml"
+            }
+        }
+    }
+}
+```
+
+#### 3. Testing
+
+Start the service with:
+
+```bash
+OPENAPI_SPEC_URL="https://raw.githubusercontent.com/APIs-guru/openapi-directory/refs/heads/main/APIs/apis.guru/2.2.0/openapi.yaml" uvx mcp-openapi-proxy
+```
+
+You can then use the MCP ecosystem to list and invoke tools such as `listAPIs`, `getMetrics`, and `getProviders` that are defined in the APIs.guru directory.
+
+### NetBox Example
+
+NetBox is an open-source IP address management (IPAM) and data center infrastructure management (DCIM) tool. This example demonstrates how to use mcp-openapi-proxy to expose the NetBox API as MCP tools.
+
+#### 1. Verify the OpenAPI Specification
+
+Retrieve the NetBox OpenAPI specification:
+
+```bash
+curl https://raw.githubusercontent.com/APIs-guru/openapi-directory/refs/heads/main/APIs/netbox.dev/3.4/openapi.yaml
+```
+
+Ensure the response is a valid OpenAPI YAML document.
+
+#### 2. Configure mcp-openapi-proxy for NetBox
+
+Add the following configuration to your MCP ecosystem settings:
+
+```json
+{
+    "mcpServers": {
+        "netbox": {
+            "command": "uvx",
+            "args": ["mcp-openapi-proxy"],
+            "env": {
+                "OPENAPI_SPEC_URL": "https://raw.githubusercontent.com/APIs-guru/openapi-directory/refs/heads/main/APIs/netbox.dev/3.4/openapi.yaml",
+                "API_KEY": "${NETBOX_API_KEY}"
+            }
+        }
+    }
+}
+```
+
+*Note: Most NetBox API endpoints require authentication. Set `NETBOX_API_KEY` in your environment or `.env` file with a valid token.*
+
+#### 3. Testing
+
+Start the service with:
+
+```bash
+OPENAPI_SPEC_URL="https://raw.githubusercontent.com/APIs-guru/openapi-directory/refs/heads/main/APIs/netbox.dev/3.4/openapi.yaml" API_KEY="$NETBOX_API_KEY" uvx mcp-openapi-proxy
+```
+
+You can then use the MCP ecosystem to list and invoke tools for endpoints like `/dcim/devices/` and `/ipam/ip-addresses/`.
+
+### Box API Example
+
+You can integrate the Box Platform API using your own developer token for authenticated access to your Box account. This example demonstrates how to expose Box API endpoints as MCP tools.
+
+#### Example config: `examples/box-claude_desktop_config.json`
+```json
+{
+  "OPENAPI_SPEC_URL": "https://raw.githubusercontent.com/APIs-guru/openapi-directory/refs/heads/main/APIs/box.com/2.0.0/openapi.yaml",
+  "API_KEY": "${BOX_API_KEY}"
+}
+```
+
+- Set your Box developer token as an environment variable in `.env`:
+  ```
+  BOX_API_KEY=your_box_developer_token
+  ```
+
+- Or run the proxy with a one-liner:
+  ```bash
+  OPENAPI_SPEC_URL="https://raw.githubusercontent.com/APIs-guru/openapi-directory/refs/heads/main/APIs/box.com/2.0.0/openapi.yaml" API_KEY="$BOX_API_KEY" uvx mcp-openapi-proxy
+  ```
+
+You can now use the MCP ecosystem to list and invoke Box API tools. For integration tests, see `tests/integration/test_box_integration.py`.
+
+### WolframAlpha API Example
+
+You can integrate the WolframAlpha API using your own App ID for authenticated access. This example demonstrates how to expose WolframAlpha API endpoints as MCP tools.
+
+#### Example config: `examples/wolframalpha-claude_desktop_config.json`
+```json
+{
+  "mcpServers": {
+    "wolframalpha": {
+      "command": "uvx",
+      "args": [
+        "mcp-openapi-proxy"
+      ],
+      "env": {
+        "OPENAPI_SPEC_URL": "https://raw.githubusercontent.com/APIs-guru/openapi-directory/refs/heads/main/APIs/wolframalpha.com/v0.1/openapi.yaml",
+        "API_KEY": "${WOLFRAM_LLM_APP_ID}"
+      }
+    }
+  }
+}
+```
+
+- Set your WolframAlpha App ID as an environment variable in `.env`:
+  ```
+  WOLFRAM_LLM_APP_ID=your_wolfram_app_id
+  ```
+
+- Or run the proxy with a one-liner:
+  ```bash
+  OPENAPI_SPEC_URL="https://raw.githubusercontent.com/APIs-guru/openapi-directory/refs/heads/main/APIs/wolframalpha.com/v0.1/openapi.yaml" API_KEY="$WOLFRAM_LLM_APP_ID" uvx mcp-openapi-proxy
+  ```
+
+You can now use the MCP ecosystem to list and invoke WolframAlpha API tools. For integration tests, see `tests/integration/test_wolframalpha_integration.py`.
 
 ## Troubleshooting
 
 ### JSON-RPC Testing
 
-For alternative testing you can interact with the MCP server via JSON-RPC. After starting the server, paste the following initialization message:
-
+For alternative testing, you can interact with the MCP server via JSON-RPC. After starting the server, paste the following initialization message:
 ```json
 {"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"claude-ai","version":"0.1.0"}},"jsonrpc":"2.0","id":0}
 ```
 
 Expected response:
-
 ```json
 {"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2024-11-05","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"sqlite","version":"0.1.0"}}}
 ```
 
 Then paste these follow-up messages:
-
 ```json
 {"method":"notifications/initialized","jsonrpc":"2.0"}
 {"method":"resources/list","params":{},"jsonrpc":"2.0","id":1}
 {"method":"tools/list","params":{},"jsonrpc":"2.0","id":2}
 ```
 
-- **Missing OPENAPI_SPEC_URL:** Ensure it’s set to a valid OpenAPI URL or local file path.
-- **Invalid Specification:** Verify that the OpenAPI document meets standards.
-- **Tool Filtering Issues:** Check that `TOOL_WHITELIST` matches the desired endpoints.
-- **Authentication Errors:** Confirm that `API_KEY` and `API_AUTH_TYPE` are configured correctly.
-- **Logging:** Set `DEBUG=true` for detailed logs.
-
-To run the server directly:
+- **Missing OPENAPI_SPEC_URL:** Ensure it’s set to a valid OpenAPI JSON URL or local file path.
+- **Invalid Specification:** Verify the OpenAPI document is standard-compliant.
+- **Tool Filtering Issues:** Check `TOOL_WHITELIST` matches desired endpoints.
+- **Authentication Errors:** Confirm `API_KEY` and `API_AUTH_TYPE` are correct.
+- **Logging:** Set `DEBUG=true` for detailed output to stderr.
+- **Test Server:** Run directly:
 
 ```bash
 uvx mcp-openapi-proxy
@@ -481,4 +671,4 @@ uvx mcp-openapi-proxy
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+[MIT License](LICENSE)
